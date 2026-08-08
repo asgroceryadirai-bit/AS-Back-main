@@ -5,7 +5,7 @@ import { Membership } from "../models/Membership.js";
 
 const router = express.Router();
 
-// Sync customer detail on Google Login / Auth check
+// Sync customer detail on Mobile Login / Auth check
 router.post("/sync", async (req, res) => {
   try {
     const { uid, displayName, email, photoURL, phoneNumber, authProvider } = req.body;

@@ -6,8 +6,8 @@ const CustomerSchema = new mongoose.Schema(
     displayName: { type: String, default: "" },
     email: { type: String, default: "", index: true },
     photoURL: { type: String, default: "" },
-    phoneNumber: { type: String, default: "" },
-    authProvider: { type: String, default: "google.com" },
+    phoneNumber: { type: String, default: "", index: true },
+    authProvider: { type: String, default: "phone" },
     lastLoginAt: { type: Date, default: Date.now },
   },
   {
