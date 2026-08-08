@@ -1,0 +1,18 @@
+import mongoose from "mongoose";
+
+const CustomerSchema = new mongoose.Schema(
+  {
+    uid: { type: String, required: true, unique: true, index: true },
+    displayName: { type: String, default: "" },
+    email: { type: String, default: "", index: true },
+    photoURL: { type: String, default: "" },
+    phoneNumber: { type: String, default: "" },
+    authProvider: { type: String, default: "google.com" },
+    lastLoginAt: { type: Date, default: Date.now },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+export const Customer = mongoose.models.Customer || mongoose.model("Customer", CustomerSchema);
