@@ -27,6 +27,14 @@ export async function connectToMongoDB() {
   try {
     await mongoose.connect(uri, options);
     console.log("✅ Connected to MongoDB Atlas successfully!");
+    
+    // Auto-seed admin credentials if needed
+    try {
+      const { seedAdmins } = await import("../controllers/adminController.js");
+      await seedAdmins();
+    } catch (seedErr) {
+      console.warn("⚠️ Admin auto-seed warning:", seedErr.message);
+    }
   } catch (err) {
     console.error("❌ MongoDB connection error:", err?.message || err);
 

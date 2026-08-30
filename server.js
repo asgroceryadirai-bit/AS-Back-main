@@ -355,10 +355,17 @@ app.put("/api/shipping-config", async (req, res) => {
     if (!config) {
       config = new ShippingConfig();
     }
-    const { group1, group2, group3 } = req.body;
-    if (typeof group1 === 'number') config.group1 = group1;
-    if (typeof group2 === 'number') config.group2 = group2;
-    if (typeof group3 === 'number') config.group3 = group3;
+    const { shippingFee, group1, group2, group3 } = req.body;
+    const val = typeof shippingFee === 'number' 
+      ? shippingFee 
+      : typeof group1 === 'number' 
+        ? group1 
+        : 30;
+
+    config.shippingFee = val;
+    config.group1 = val;
+    config.group2 = val;
+    config.group3 = val;
     
     await config.save();
     res.json(config);

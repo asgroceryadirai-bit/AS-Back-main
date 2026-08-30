@@ -4,7 +4,7 @@ const adminSchema = new mongoose.Schema(
   {
     role: {
       type: String,
-      enum: ["orders", "catalog", "news"],
+      enum: ["admin", "orders", "catalog", "news", "superadmin"],
       required: true,
       unique: true,
     },

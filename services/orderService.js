@@ -162,11 +162,11 @@ export const computeOrderTotals = async (items = [], couponCode, isOutOfIndia = 
     } else {
       let config = await ShippingConfig.findOne();
       if (!config) {
-        config = { group1: 30, group2: 30, group3: 30 };
+        config = { shippingFee: 30, group1: 30, group2: 30, group3: 30 };
       }
       const address = shippingDetails || billingDetails || {};
       const group = getRegionGroup(address);
-      const rate = (group && config[group]) ?? 30;
+      const rate = config.shippingFee ?? (group && config[group]) ?? config.group1 ?? 30;
       shipping = rate * Math.max(1, totalQuantity);
     }
   }
@@ -261,6 +261,28 @@ export const addNewOrder = async (orderData, customerIp) => {
   }
   const orderNumber = String(nextNum).padStart(6, '0');
 
+  // Reduce stock for physical products upon order placement
+  let stockWasReduced = false;
+  for (const item of finalItems || []) {
+    if (!isDigitalProductItem(item)) {
+      try {
+        const matched = await findProductForOrderItem(item);
+        if (matched && matched.product) {
+          const product = matched.product;
+          const oldStock = Number(product.stock ?? 0);
+          const qty = Number(item.quantity || 1);
+          const newStock = Math.max(0, oldStock - qty);
+          product.stock = newStock;
+          await product.save();
+          stockWasReduced = true;
+          historyEntry.note += ` Stock reduced by ${qty} for "${product.name || product.title}" (${oldStock} -> ${newStock}).`;
+        }
+      } catch (err) {
+        console.error("Failed to decrement stock on order creation:", err);
+      }
+    }
+  }
+
   const newOrder = new Order({
     userId,
     orderNumber,
@@ -272,6 +294,8 @@ export const addNewOrder = async (orderData, customerIp) => {
     membershipDiscount: membershipDiscount || 0,
     membershipPlan: membershipPlan || '',
     status: initialStatus,
+    stockReduced: stockWasReduced,
+    stockRestored: false,
     trackingId,
     shippingAddress: shippingAddress || (billingDetails ? `${billingDetails.firstName} ${billingDetails.lastName}, ${billingDetails.streetAddress1}, ${billingDetails.city}` : ""),
     couponCode: couponCode || "",
@@ -311,6 +335,66 @@ export const addNewOrder = async (orderData, customerIp) => {
   }
 
   return savedOrder;
+};
+
+/**
+ * Helper to adjust inventory stocks when orders are rejected or reactivated.
+ */
+export const handleStockOnStatusTransition = async (order, oldStatus, newStatus, systemNotes = []) => {
+  if (!newStatus || String(oldStatus).toLowerCase() === String(newStatus).toLowerCase()) return;
+
+  const isNowRejected = ['rejected', 'cancelled', 'failed', 'refunded'].includes(newStatus.toLowerCase());
+  const wasRejected = ['rejected', 'cancelled', 'failed', 'refunded'].includes(String(oldStatus || '').toLowerCase());
+
+  // 1. Transition to Rejected: restore product counts
+  if (isNowRejected && !wasRejected) {
+    if (order.stockReduced || !order.stockRestored) {
+      for (const item of order.items || []) {
+        if (!isDigitalProductItem(item)) {
+          try {
+            const matched = await findProductForOrderItem(item);
+            if (matched && matched.product) {
+              const product = matched.product;
+              const oldStock = Number(product.stock ?? 0);
+              const qty = Number(item.quantity || 1);
+              const newStock = oldStock + qty;
+              product.stock = newStock;
+              await product.save();
+              systemNotes.push(`Stock count restored (+${qty}) for "${product.name || product.title}" (${oldStock} -> ${newStock}) due to order rejection.`);
+            }
+          } catch (err) {
+            console.error("Failed to restore stock on rejection:", err);
+          }
+        }
+      }
+      order.stockRestored = true;
+      order.stockReduced = false;
+    }
+  }
+
+  // 2. Transition from Rejected to Active: reduce stock counts again
+  if (!isNowRejected && wasRejected && order.stockRestored) {
+    for (const item of order.items || []) {
+      if (!isDigitalProductItem(item)) {
+        try {
+          const matched = await findProductForOrderItem(item);
+          if (matched && matched.product) {
+            const product = matched.product;
+            const oldStock = Number(product.stock ?? 0);
+            const qty = Number(item.quantity || 1);
+            const newStock = Math.max(0, oldStock - qty);
+            product.stock = newStock;
+            await product.save();
+            systemNotes.push(`Stock count reduced (-${qty}) for "${product.name || product.title}" (${oldStock} -> ${newStock}) as order was re-opened.`);
+          }
+        } catch (err) {
+          console.error("Failed to reduce stock on reactivation:", err);
+        }
+      }
+    }
+    order.stockRestored = false;
+    order.stockReduced = true;
+  }
 };
 
 /**
@@ -361,11 +445,20 @@ export const modifyOrder = async (id, updateData) => {
   if (status) {
     const oldStatus = order.status;
     if (oldStatus !== status) {
+      const notes = [];
+      await handleStockOnStatusTransition(order, oldStatus, status, notes);
       order.status = status;
       order.statusHistory.push({
         status: status,
         updatedAt: new Date(),
         note: `Order status changed from ${oldStatus.toUpperCase()} to ${status.toUpperCase()} via Admin Dashboard update.`
+      });
+      notes.forEach(n => {
+        order.statusHistory.push({
+          status: status,
+          updatedAt: new Date(),
+          note: n
+        });
       });
     }
   }
@@ -383,7 +476,7 @@ export const modifyOrder = async (id, updateData) => {
 };
 
 /**
- * Modify order status, handle Razorpay metadata, and reduce book stocks if transition is from pending.
+ * Modify order status, handle Razorpay metadata, and reduce/restore stocks on status transitions.
  */
 export const modifyOrderStatus = async (id, statusData) => {
   const { status, trackingId, trackingNumber, razorpayPaymentId, razorpayOrderId, razorpaySignature, note } = statusData;
@@ -428,6 +521,8 @@ export const modifyOrderStatus = async (id, statusData) => {
   const systemNotes = [];
   if (status && oldStatus !== status) {
     systemNotes.push(`Order status changed from ${oldStatus} to ${status}.`);
+    // Handle automatic stock restoration on rejection or reduction on reactivation
+    await handleStockOnStatusTransition(order, oldStatus, status, systemNotes);
   }
   if (razorpayPaymentId) {
     systemNotes.push(`Razorpay payment successful. Payment ID: ${razorpayPaymentId}`);
@@ -448,44 +543,11 @@ export const modifyOrderStatus = async (id, statusData) => {
     });
   });
 
-  // If order was transitioned to paid/processing/completed from pending, validate stock first and then adjust it
-  if (status && ["paid", "processing", "completed"].includes(status) && ["pending"].includes(oldStatus)) {
-    for (const item of order.items || []) {
-      const availability = await getStockAvailabilityForItem(item);
-      if (!availability.available) {
-        throw new Error(availability.error || "One or more items are unavailable for purchase.");
-      }
-    }
-
-    for (const item of order.items || []) {
-      try {
-        if (item.productId && !item.productId.startsWith("guest-") && !item.productId.includes("-")) {
-          const book = await Book.findById(item.productId);
-          if (book) {
-            const oldStock = book.stock;
-            const newStock = Math.max(0, oldStock - item.quantity);
-            book.stock = newStock;
-            await book.save();
-
-            // Record stock reduction log
-            order.statusHistory.push({
-              status: status,
-              updatedAt: new Date(),
-              note: `Stock levels reduced: ${book.name} (${oldStock} -> ${newStock})`
-            });
-          }
-        }
-      } catch (err) {
-        console.error("Failed to decrement stock for item:", item.productId, err);
-      }
-    }
-
-    if (order.couponCode) {
-      try {
-        await markCouponAsUsed({ code: order.couponCode, userId: order.userId });
-      } catch (err) {
-        console.warn('Failed to mark coupon as used on payment completion:', err);
-      }
+  if (order.couponCode && status && ["paid", "processing", "completed", "out_for_delivery", "delivered"].includes(status)) {
+    try {
+      await markCouponAsUsed({ code: order.couponCode, userId: order.userId });
+    } catch (err) {
+      console.warn('Failed to mark coupon as used:', err);
     }
   }
 
