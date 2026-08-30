@@ -1,5 +1,6 @@
 import { Order } from "../models/Order.js";
 import { Book } from "../models/Book.js";
+import { Customer } from "../models/Customer.js";
 
 // GET shop analytical stats for the Admin Dashboard
 export const getStats = async (req, res) => {
@@ -101,12 +102,15 @@ export const getStats = async (req, res) => {
       count: s.count,
     }));
 
-    // 12. Total unique users who have ordered
-    const uniqueUsersAgg = await Order.aggregate([
-      { $group: { _id: "$userId" } },
-      { $count: "total" },
+    // 12. Total unique customers
+    const [dbCustomerCount, uniqueUsersAgg] = await Promise.all([
+      Customer.countDocuments(),
+      Order.aggregate([
+        { $group: { _id: "$userId" } },
+        { $count: "total" },
+      ]),
     ]);
-    const uniqueCustomers = uniqueUsersAgg[0]?.total || 0;
+    const uniqueCustomers = Math.max(dbCustomerCount, uniqueUsersAgg[0]?.total || 0);
 
     res.json({
       totalSales,
@@ -115,6 +119,7 @@ export const getStats = async (req, res) => {
       totalBooksSold,
       lowStockCount,
       totalProducts: totalProductsCount,
+      totalCustomers: uniqueCustomers,
       categoriesDistribution,
       conversionRate: 12.4,
       recentOrders,

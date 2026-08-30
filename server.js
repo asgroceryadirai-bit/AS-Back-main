@@ -467,6 +467,7 @@ app.get("/api/quran/intro/:sura", async (req, res) => {
 });
 
 // Backend API Routes
+app.use("/api/products", bookRouter);
 app.use("/api/books", bookRouter);
 app.use("/api/audiobooks", audioBookRouter);
 app.use("/api/ebooks", eBookRouter);

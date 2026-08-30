@@ -15,6 +15,7 @@ import {
 } from './emailService.js';
 import { getStockAvailabilityForItem, findProductForOrderItem, isDigitalProductItem } from '../utils/stockUtils.js';
 import { validateCouponForCart, markCouponAsUsed } from './couponService.js';
+import { sendTelegramOrderAlert } from './telegramService.js';
 
 // Membership discount rates per plan
 const MEMBERSHIP_DISCOUNT_RATES = {
@@ -284,6 +285,13 @@ export const addNewOrder = async (orderData, customerIp) => {
   });
 
   const savedOrder = await newOrder.save();
+
+  // Send real-time Telegram order notification to Admin
+  try {
+    sendTelegramOrderAlert(savedOrder);
+  } catch (tgErr) {
+    console.warn("Telegram notification error:", tgErr);
+  }
 
   if (couponCode && savedOrder && ["paid", "processing", "completed"].includes(initialStatus)) {
     try {
