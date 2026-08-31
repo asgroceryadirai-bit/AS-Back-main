@@ -89,7 +89,18 @@ router.post("/auth", async (req, res) => {
       });
     }
 
-    // New customer registration / first-time phone sign-in
+    // Customer does NOT exist:
+    // If mode is 'login', inform the user that this number is not registered yet
+    if (mode === "login") {
+      return res.json({
+        success: false,
+        notRegistered: true,
+        error: "This mobile number is not registered yet. Please enter your name and address to create an account.",
+        phoneNumber,
+      });
+    }
+
+    // New customer registration
     const resolvedName = (displayName && displayName.trim() && !displayName.startsWith("Customer"))
       ? displayName.trim()
       : (orderName && !orderName.startsWith("Customer") ? orderName : "");
@@ -107,7 +118,7 @@ router.post("/auth", async (req, res) => {
       createdAt: new Date(),
     });
 
-    res.json({
+    return res.json({
       success: true,
       customer: newCustomer,
       isNew: true,
